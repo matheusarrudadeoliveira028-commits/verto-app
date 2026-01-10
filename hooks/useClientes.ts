@@ -25,7 +25,6 @@ export function useClientes() {
     } catch (e) { Alert.alert("Erro", "Falha ao salvar"); }
   };
 
-  // --- CÁLCULOS ---
   const calcularTotais = () => {
     let capitalTotal = 0, lucro = 0, multas = 0;
     clientes.forEach(cli => {
@@ -37,8 +36,6 @@ export function useClientes() {
         multas += (con.multasPagas || 0);
       });
     });
-    // Retornamos como 'rua' se o seu Dashboard antigo usar 'rua', ou 'capital' se já tiver mudado.
-    // Para garantir, vou retornar os dois nomes, assim funciona em qualquer versão.
     return { rua: capitalTotal, capital: capitalTotal, lucro, multas };
   };
 
@@ -47,7 +44,6 @@ export function useClientes() {
     return new Date(Number(ano), Number(mes) - 1, Number(dia));
   };
 
-  // --- CRUD BÁSICO ---
   const adicionarCliente = async (novoCliente: Cliente) => {
     const lista = [novoCliente, ...clientes];
     await salvarNoBanco(lista);
@@ -69,10 +65,7 @@ export function useClientes() {
     ]);
   };
 
-  // --- AQUI ESTÁ A LÓGICA DO DIÁRIO ---
   const adicionarContrato = async (nomeCliente: string, novoContrato: Contrato) => {
-    
-    // 1. SEMANAL (4 Parcelas)
     if (novoContrato.frequencia === 'SEMANAL') {
       const jurosTotal = novoContrato.capital * (novoContrato.taxa / 100);
       const montanteTotal = novoContrato.capital + jurosTotal;
@@ -93,14 +86,10 @@ export function useClientes() {
         `${new Date().toLocaleDateString('pt-BR')}: Semanal Iniciado -> 4x de R$ ${valorParcela.toFixed(2)}`
       ];
     }
-
-    // 2. DIÁRIO (Parcelas = Dias escolhidos)
     else if (novoContrato.frequencia === 'DIARIO' && novoContrato.diasDiario && novoContrato.diasDiario > 0) {
-      const jurosTotal = novoContrato.capital * (novoContrato.taxa / 100); // Ex: 1000 + 20% = 200 juros
-      const montanteTotal = novoContrato.capital + jurosTotal; // Total 1200
-      const qtdDias = novoContrato.diasDiario; // Ex: 20 dias
-
-      // CALCULO DIÁRIO: 1200 / 20 = 60 reais por dia
+      const jurosTotal = novoContrato.capital * (novoContrato.taxa / 100);
+      const montanteTotal = novoContrato.capital + jurosTotal;
+      const qtdDias = novoContrato.diasDiario;
       const valorParcela = montanteTotal / qtdDias;
       const lucroPorParcela = jurosTotal / qtdDias;
 
@@ -110,7 +99,6 @@ export function useClientes() {
       novoContrato.valorParcela = valorParcela;
       novoContrato.lucroJurosPorParcela = lucroPorParcela;
 
-      // DATA: Primeiro pagamento é AMANHÃ (+1 dia)
       const dtAmanha = new Date();
       dtAmanha.setDate(dtAmanha.getDate() + 1);
       novoContrato.proximoVencimento = dtAmanha.toLocaleDateString('pt-BR');
@@ -118,6 +106,11 @@ export function useClientes() {
       novoContrato.movimentacoes = [
         `${new Date().toLocaleDateString('pt-BR')}: Diário Iniciado -> ${qtdDias} dias de R$ ${valorParcela.toFixed(2)}`
       ];
+    } else {
+        // Mensal padrão
+        novoContrato.movimentacoes = [
+           `${new Date().toLocaleDateString('pt-BR')}: Iniciado Capital R$ ${novoContrato.capital.toFixed(2)}`
+        ];
     }
 
     const lista = clientes.map(c => c.nome === nomeCliente ? { ...c, contratos: [novoContrato, ...(c.contratos || [])] } : c);
@@ -139,7 +132,7 @@ export function useClientes() {
   };
 
   const excluirContrato = (contratoId: number) => {
-    Alert.alert("Excluir", "Apagar este empr\u00E9stimo?", [
+    Alert.alert("Excluir", "Apagar este empréstimo?", [
       { text: "Cancelar" },
       { text: "Apagar", style: 'destructive', onPress: async () => {
           const lista = clientes.map(c => ({
@@ -152,13 +145,12 @@ export function useClientes() {
     ]);
   };
 
-  // --- RENOVAR E QUITAR ---
+  // --- RENOVAR E QUITAR (COM LOG ATUALIZADO) ---
   const acaoRenovarQuitar = async (tipo: string, contrato: Contrato, nomeCliente: string, dataInformada: string) => {
     try {
       const vJuro = contrato.capital * (contrato.taxa / 100);
       let vMulta = 0;
       
-      // Lógica de Multa
       if (contrato.valorMultaDiaria && contrato.valorMultaDiaria > 0) {
         const dataPagamento = converterData(dataInformada);
         const dataVencimento = converterData(contrato.proximoVencimento);
@@ -178,22 +170,35 @@ export function useClientes() {
               
               if (tipo === 'RENOVAR') {
                 const nD = converterData(dataInformada);
-                // Renovar
                 if (con.frequencia === 'SEMANAL') nD.setDate(nD.getDate() + 7);
-                else if (con.frequencia === 'DIARIO') nD.setDate(nD.getDate() + 1); // Renovar Diário joga pra amanhã
+                else if (con.frequencia === 'DIARIO') nD.setDate(nD.getDate() + 1);
                 else nD.setMonth(nD.getMonth() + 1);
 
-                let msg = `${dataInformada}: RENOVA\u00C7\u00C3O + R$ ${lucroOperacao.toFixed(2)}`;
-                if(vMulta > 0) msg += ` (Multa R$ ${vMulta.toFixed(2)})`;
+                // Log Detalhado Renovação
+                let msg = `${dataInformada}: RENOVAÇÃO R$ ${lucroOperacao.toFixed(2)}`;
+                if(vMulta > 0) msg += ` (Juros R$ ${vJuro.toFixed(2)} | Multa R$ ${vMulta.toFixed(2)})`;
                 
                 h.unshift(msg);
                 return { ...con, lucroTotal: (con.lucroTotal||0)+lucroOperacao, multasPagas: (con.multasPagas||0)+vMulta, proximoVencimento: nD.toLocaleDateString('pt-BR'), movimentacoes: h };
               
               } else {
-                // Quitar
+                // Quitar - AQUI ESTAVA O PROBLEMA
                 const totalParaQuitar = contrato.capital + lucroOperacao;
-                h.unshift(`${dataInformada}: QUITADO - Recebido: R$ ${totalParaQuitar.toFixed(2)}`);
-                return { ...con, status: 'QUITADO' as const, lucroTotal: (con.lucroTotal||0)+lucroOperacao, multasPagas: (con.multasPagas||0)+vMulta, movimentacoes: h };
+                
+                // Novo Log Detalhado para Quitação
+                let msg = `${dataInformada}: QUITADO - Total R$ ${totalParaQuitar.toFixed(2)} (Capital R$ ${contrato.capital.toFixed(2)} | Lucro R$ ${vJuro.toFixed(2)}`;
+                if(vMulta > 0) msg += ` | Multa R$ ${vMulta.toFixed(2)}`;
+                msg += `)`;
+
+                h.unshift(msg);
+                
+                return { 
+                  ...con, 
+                  status: 'QUITADO' as const, 
+                  lucroTotal: (con.lucroTotal||0)+lucroOperacao, 
+                  multasPagas: (con.multasPagas||0)+vMulta, 
+                  movimentacoes: h 
+                };
               }
             }
             return con;
@@ -204,7 +209,7 @@ export function useClientes() {
       });
       
       await salvarNoBanco(lista);
-    } catch (e) { Alert.alert("Erro", "Data inv\u00E1lida"); }
+    } catch (e) { Alert.alert("Erro", "Data inválida"); }
   };
 
   const criarAcordo = async (nomeCliente: string, contratoId: number, valorTotal: number, qtdParcelas: number, dataPrimeira: string, multaDiaria: number) => {
@@ -238,7 +243,6 @@ export function useClientes() {
     await salvarNoBanco(lista);
   };
 
-  // --- PAGAMENTO DE PARCELA ---
   const pagarParcela = async (nomeCliente: string, contrato: Contrato, dataPagamento: string) => {
     try {
       let vMulta = 0;
@@ -249,7 +253,6 @@ export function useClientes() {
         const dtVenc = converterData(contrato.proximoVencimento);
         const diffTime = dtPag.getTime() - dtVenc.getTime();
         const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-        
         if (diffDays > 0) {
           diasAtraso = diffDays;
           vMulta = diffDays * contrato.valorMultaDiaria;
@@ -284,15 +287,9 @@ export function useClientes() {
                 };
               } else {
                 const nD = converterData(contrato.proximoVencimento); 
-                
-                // --- ATUALIZA A PRÓXIMA DATA ---
-                if (contrato.frequencia === 'SEMANAL') {
-                    nD.setDate(nD.getDate() + 7);
-                } else if (contrato.frequencia === 'DIARIO') {
-                    nD.setDate(nD.getDate() + 1); // PULA 1 DIA APENAS
-                } else {
-                    nD.setMonth(nD.getMonth() + 1);
-                }
+                if (contrato.frequencia === 'SEMANAL') nD.setDate(nD.getDate() + 7);
+                else if (contrato.frequencia === 'DIARIO') nD.setDate(nD.getDate() + 1);
+                else nD.setMonth(nD.getMonth() + 1);
 
                 return {
                   ...con,
@@ -322,7 +319,6 @@ export function useClientes() {
 
   return {
     clientes, 
-    // MANTIVE OS DOIS NOMES PARA NÃO QUEBRAR O LAYOUT ANTIGO
     totais: calcularTotais(), 
     adicionarCliente, editarCliente, excluirCliente,
     adicionarContrato, editarContrato, excluirContrato, acaoRenovarQuitar, criarAcordo, pagarParcela, importarDados

@@ -28,32 +28,42 @@ export default function ModalRelatorio({ visivel, fechar, clientes }: Props) {
     } catch (e) { return new Date(''); }
   };
 
-  // Extrai valor monetário de uma string (ex: "R$ 1.200,50")
-  const extrairValor = (texto: string) => {
-    const match = texto.match(/R\$\s?([\d\.,]+)/);
+  // --- CORREÇÃO DO PARSER DE VALORES ---
+  const limparValor = (valorStr: string) => {
+    if (!valorStr) return 0;
+
+    // Cenário 1: Formato Brasileiro (tem vírgula para decimal) -> Ex: 1.200,50
+    if (valorStr.includes(',')) {
+      // Remove pontos de milhar e troca vírgula por ponto
+      return parseFloat(valorStr.replace(/\./g, '').replace(',', '.'));
+    }
+    
+    // Cenário 2: Formato Sistema/JS (só tem ponto para decimal) -> Ex: 1200.50
+    // Se só tiver ponto, o parseFloat já entende. 
+    // MAS CUIDADO: Se tiver mais de um ponto (1.200.50 - erro raro), isso quebraria.
+    // Como toFixed(2) gera apenas um ponto, o parseFloat direto resolve.
+    return parseFloat(valorStr);
+  };
+
+  const buscarValor = (texto: string, chave: string) => {
+    // Procura por "Chave R$ 10,00" ou "Chave: R$ 10.00"
+    const regex = new RegExp(`${chave}[^0-9]*([0-9.,]+)`, 'i');
+    const match = texto.match(regex);
     if (match) {
-      let valorLimpo = match[1];
-      if (valorLimpo.includes(',')) {
-        valorLimpo = valorLimpo.replace(/\./g, '').replace(',', '.');
-      } 
-      return parseFloat(valorLimpo);
+      return limparValor(match[1]);
     }
     return 0;
   };
 
-  // Tenta extrair especificamente o valor da multa (ex: "Multa R$ 20,00")
-  const extrairMulta = (texto: string) => {
-    // Procura por "Multa R$ ..." ignorando case
-    const match = texto.match(/(?:Multa|multa)\s*R\$\s?([\d\.,]+)/);
+  const extrairTotal = (texto: string) => {
+    // Pega o primeiro valor monetário que encontrar
+    const match = texto.match(/R\$\s?([\d\.,]+)/);
     if (match) {
-      let valorLimpo = match[1];
-      if (valorLimpo.includes(',')) {
-        valorLimpo = valorLimpo.replace(/\./g, '').replace(',', '.');
-      }
-      return parseFloat(valorLimpo);
+      return limparValor(match[1]);
     }
     return 0;
   };
+  // -------------------------------------
 
   const gerarRelatorio = async () => {
     try {
@@ -69,11 +79,10 @@ export default function ModalRelatorio({ visivel, fechar, clientes }: Props) {
       
       dtFim.setHours(23, 59, 59);
 
-      // Totais
       let totalInvestido = 0;
-      let totalEntradaBruta = 0;
-      let totalLucroJuros = 0;
-      let totalMultas = 0;
+      let totalRecebidoBruto = 0;
+      let totalLucroLiquido = 0; 
+      let totalMultasRecolhidas = 0;
 
       let htmlInvestimentos = '';
       let htmlEntradas = '';
@@ -81,9 +90,8 @@ export default function ModalRelatorio({ visivel, fechar, clientes }: Props) {
       clientes.forEach(cli => {
         (cli.contratos || []).forEach(con => {
           
-          // --- 1. SAÍDAS (NOVOS EMPRÉSTIMOS) ---
+          // --- SAÍDAS (NOVOS EMPRÉSTIMOS) ---
           let dataCon = parseData(con.dataInicio);
-          // Fallback se não tiver dataInicio válida
           if (isNaN(dataCon.getTime()) && con.movimentacoes?.length > 0) {
              const primeiraMov = con.movimentacoes[con.movimentacoes.length - 1]; 
              dataCon = parseData(primeiraMov.split(':')[0]);
@@ -100,7 +108,7 @@ export default function ModalRelatorio({ visivel, fechar, clientes }: Props) {
             `;
           }
 
-          // --- 2. ENTRADAS (PAGAMENTOS) ---
+          // --- ENTRADAS (MOVIMENTAÇÕES) ---
           (con.movimentacoes || []).forEach(mov => {
             const partes = mov.split(':');
             if (partes.length < 2) return;
@@ -110,70 +118,96 @@ export default function ModalRelatorio({ visivel, fechar, clientes }: Props) {
             const descricao = partes.slice(1).join(':').trim();
 
             if (!isNaN(dataMov.getTime()) && dataMov >= dtInicio && dataMov <= dtFim) {
-              const valorTotalItem = extrairValor(descricao);
               
-              if (valorTotalItem > 0) {
-                // Ignora "Iniciado" e "Acordo" pois não são entradas de caixa
-                if (descricao.toLowerCase().includes('iniciado') || descricao.toLowerCase().includes('acordo')) {
-                    return; 
-                }
+              if (descricao.toLowerCase().includes('iniciado') || descricao.toLowerCase().includes('acordo')) return;
 
-                // IDENTIFICAÇÃO DOS COMPONENTES
-                const valMulta = extrairMulta(descricao);
-                let valLucro = 0;
-                let valCapital = 0;
-                let tipo = 'Outros';
+              let valTotal = extrairTotal(descricao);
+              let valMulta = 0;
+              let valLucro = 0;
+              let valCapital = 0;
+              let tipo = 'Pagamento';
+
+              // === LÓGICA DE VALORES ===
+              
+              const temLucroExpl = buscarValor(descricao, 'Lucro');
+              const temMultaExpl = buscarValor(descricao, 'Multa');
+              const temCapitalExpl = buscarValor(descricao, 'Capital');
+
+              if (temLucroExpl > 0 || temCapitalExpl > 0) {
+                // Se encontrou valores explícitos (Novo Log)
+                valLucro = temLucroExpl;
+                valMulta = temMultaExpl;
+                valCapital = temCapitalExpl;
+                
+                // Recalcula total se necessário para bater com a soma
+                const somaInterna = valLucro + valMulta + valCapital;
+                // Se a diferença for pequena (centavos) ou se valTotal for 0, confia na soma
+                if (Math.abs(somaInterna - valTotal) > 0.1) {
+                    // Mantém o valTotal lido, mas ajusta o capital se for inconsistente
+                    // Ou confia na soma interna como a verdade
+                    valTotal = somaInterna; 
+                }
+              } 
+              else {
+                // === LOG ANTIGO (ESTIMATIVA) ===
+                valMulta = buscarValor(descricao, 'Multa'); 
 
                 if (descricao.toLowerCase().includes('parcela')) {
                     tipo = 'Parcela';
-                    // Na parcela: Lucro é fixo (calculado na criação) + Multa é extra
-                    const lucroPrevisto = con.lucroJurosPorParcela || 0;
-                    
-                    valLucro = lucroPrevisto;
-                    // Capital é o que sobra: Total - Multa - LucroJuros
-                    // (Proteção para não ficar negativo se o valor pago for parcial)
-                    valCapital = valorTotalItem - valMulta - valLucro;
-                    if (valCapital < 0) valCapital = 0; 
+                    if (con.lucroJurosPorParcela) {
+                        valLucro = con.lucroJurosPorParcela;
+                    } else if (con.taxa > 0) {
+                        const base = (valTotal - valMulta) / (1 + (con.taxa/100));
+                        valLucro = (valTotal - valMulta) - base;
+                    }
+                    valCapital = valTotal - valMulta - valLucro;
 
                 } else if (descricao.toLowerCase().includes('renova')) {
                     tipo = 'Renovação';
-                    // Renovação é pura receita de juros/multa. Não abate capital.
-                    valLucro = valorTotalItem - valMulta;
+                    valLucro = valTotal - valMulta;
                     valCapital = 0;
 
                 } else if (descricao.toLowerCase().includes('quitado')) {
                     tipo = 'Quitação';
-                    // Na quitação, é difícil saber quanto é Juro exato sem histórico complexo.
-                    // Vamos separar a Multa. O resto vai como "Capital+Juros" para não mentir.
-                    // Assumiremos Lucro 0 aqui para não inflar sem certeza, ou você pode definir uma regra.
-                    valCapital = valorTotalItem - valMulta; 
-                    valLucro = 0; // Deixa zerado ou põe um asterisco
+                    // Fallback para quitação antiga sem detalhes
+                    const capitalEstimado = con.capital || 0;
+                    if (valTotal >= capitalEstimado) {
+                        valCapital = capitalEstimado;
+                        valLucro = valTotal - valCapital - valMulta;
+                    } else {
+                        valCapital = valTotal - valMulta;
+                        valLucro = 0;
+                    }
                 } else {
-                    // Outros pagamentos avulsos
-                    valCapital = valorTotalItem - valMulta;
+                    valCapital = valTotal - valMulta;
                 }
-
-                // Somatórios Gerais
-                totalEntradaBruta += valorTotalItem;
-                totalMultas += valMulta;
-                totalLucroJuros += valLucro;
-
-                // Estilo para tabela
-                const styleMulta = valMulta > 0 ? 'color: #E67E22; font-weight:bold;' : 'color: #CCC;';
-                const styleLucro = valLucro > 0 ? 'color: #27AE60; font-weight:bold;' : 'color: #CCC;';
-
-                htmlEntradas += `
-                  <tr>
-                    <td>${dataMov.toLocaleDateString('pt-BR')}</td>
-                    <td>${cli.nome}</td>
-                    <td><span style="font-size:10px; background:#EEE; padding:2px 4px; border-radius:4px;">${tipo}</span></td>
-                    <td style="font-weight:bold;">R$ ${valorTotalItem.toFixed(2)}</td>
-                    <td style="color:#555;">R$ ${valCapital.toFixed(2)}</td>
-                    <td style="${styleLucro}">R$ ${valLucro.toFixed(2)}</td>
-                    <td style="${styleMulta}">R$ ${valMulta.toFixed(2)}</td>
-                  </tr>
-                `;
               }
+
+              if (valLucro < 0) valLucro = 0;
+              if (valCapital < 0) valCapital = 0;
+
+              totalRecebidoBruto += valTotal;
+              totalMultasRecolhidas += valMulta;
+              totalLucroLiquido += valLucro;
+
+              // Estilos de visualização
+              const styleLucro = valLucro > 0 ? 'color:#27AE60; font-weight:bold;' : 'color:#CCC;';
+              const styleMulta = valMulta > 0 ? 'color:#E67E22; font-weight:bold;' : 'color:#CCC;';
+              
+              if (descricao.toLowerCase().includes('quitado')) tipo = 'Quitação';
+              if (descricao.toLowerCase().includes('renova')) tipo = 'Renovação';
+
+              htmlEntradas += `
+                <tr>
+                  <td>${dataMov.toLocaleDateString('pt-BR')}</td>
+                  <td>${cli.nome}</td>
+                  <td><span style="font-size:9px; background:#EEE; padding:2px 4px; border-radius:4px;">${tipo}</span></td>
+                  <td style="font-weight:bold;">R$ ${valTotal.toFixed(2)}</td>
+                  <td style="color:#7F8C8D;">R$ ${valCapital.toFixed(2)}</td>
+                  <td style="${styleLucro}">R$ ${valLucro.toFixed(2)}</td>
+                  <td style="${styleMulta}">R$ ${valMulta.toFixed(2)}</td>
+                </tr>
+              `;
             }
           });
         });
@@ -184,86 +218,86 @@ export default function ModalRelatorio({ visivel, fechar, clientes }: Props) {
           <head>
             <meta name="viewport" content="width=device-width, initial-scale=1.0" />
             <style>
-              body { font-family: sans-serif; padding: 15px; color: #333; }
-              h1 { text-align: center; color: #2C3E50; margin-bottom: 5px; }
-              .periodo { text-align: center; color: #7F8C8D; margin-bottom: 20px; font-size: 14px; }
+              body { font-family: 'Helvetica', sans-serif; padding: 15px; color: #333; }
+              h1 { text-align: center; color: #2C3E50; margin-bottom: 5px; font-size: 22px; }
+              .periodo { text-align: center; color: #7F8C8D; margin-bottom: 25px; font-size: 12px; }
               
-              .cards-container { display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; margin-bottom: 30px; }
-              .card { flex: 1; min-width: 45%; background: #F8F9FA; padding: 10px; border-radius: 8px; border: 1px solid #EEE; text-align: center; }
-              .card-label { font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 1px; }
-              .card-value { font-size: 18px; font-weight: bold; margin-top: 5px; }
+              .resumo-grid { display: flex; flex-direction: row; justify-content: space-between; margin-bottom: 30px; gap: 8px; }
+              .card { flex: 1; background: #F8F9FA; padding: 10px 5px; border-radius: 8px; border: 1px solid #E0E0E0; text-align: center; }
+              .card-lbl { font-size: 9px; color: #666; text-transform: uppercase; font-weight: bold; margin-bottom: 4px; }
+              .card-val { font-size: 16px; font-weight: bold; }
               
-              .txt-red { color: #C0392B; }
-              .txt-blue { color: #2980B9; }
-              .txt-green { color: #27AE60; }
-              .txt-orange { color: #E67E22; }
+              .red { color: #C0392B; }
+              .blue { color: #2980B9; }
+              .green { color: #27AE60; }
+              .orange { color: #D35400; }
 
-              h2 { font-size: 14px; border-bottom: 2px solid #34495E; padding-bottom: 5px; margin-top: 25px; text-transform: uppercase; }
+              h2 { font-size: 14px; border-bottom: 2px solid #34495E; padding-bottom: 5px; margin-top: 25px; text-transform: uppercase; color: #34495E; }
               
               table { width: 100%; border-collapse: collapse; font-size: 10px; margin-top: 10px; }
-              th { background: #34495E; color: #FFF; padding: 6px; text-align: left; }
-              td { border-bottom: 1px solid #EEE; padding: 6px; }
-              tr:nth-child(even) { background: #F9F9F9; }
+              th { background: #34495E; color: #FFF; padding: 6px 4px; text-align: left; }
+              td { border-bottom: 1px solid #EEE; padding: 8px 4px; vertical-align: middle; }
+              tr:nth-child(even) { background: #FCFDFE; }
               
-              .footer { margin-top: 40px; text-align: center; font-size: 9px; color: #AAA; }
+              .footer { margin-top: 40px; text-align: center; font-size: 9px; color: #AAA; border-top: 1px solid #EEE; padding-top: 10px; }
             </style>
           </head>
           <body>
             <h1>Relatório Financeiro</h1>
-            <div class="periodo">${dataIni} até ${dataFim}</div>
+            <div class="periodo">Período: ${dataIni} até ${dataFim}</div>
 
-            <div class="cards-container">
+            <div class="resumo-grid">
               <div class="card">
-                <div class="card-label">Investido (Saída)</div>
-                <div class="card-value txt-red">R$ ${totalInvestido.toFixed(2)}</div>
+                <div class="card-lbl">Investido</div>
+                <div class="card-val red">R$ ${totalInvestido.toFixed(2)}</div>
               </div>
               <div class="card">
-                <div class="card-label">Arrecadado (Bruto)</div>
-                <div class="card-value txt-blue">R$ ${totalEntradaBruta.toFixed(2)}</div>
+                <div class="card-lbl">Total Recebido</div>
+                <div class="card-val blue">R$ ${totalRecebidoBruto.toFixed(2)}</div>
               </div>
               <div class="card">
-                <div class="card-label">Lucro Juros</div>
-                <div class="card-value txt-green">R$ ${totalLucroJuros.toFixed(2)}</div>
+                <div class="card-lbl">Lucro (Juros)</div>
+                <div class="card-val green">R$ ${totalLucroLiquido.toFixed(2)}</div>
               </div>
               <div class="card">
-                <div class="card-label">Total Multas</div>
-                <div class="card-value txt-orange">R$ ${totalMultas.toFixed(2)}</div>
+                <div class="card-lbl">Multas</div>
+                <div class="card-val orange">R$ ${totalMultasRecolhidas.toFixed(2)}</div>
               </div>
             </div>
 
-            <h2>Detalhamento de Entradas</h2>
+            <h2>Entradas (Pagamentos)</h2>
             ${htmlEntradas ? `
               <table>
                 <thead>
                   <tr>
-                    <th>Data</th>
-                    <th>Cliente</th>
-                    <th>Tipo</th>
-                    <th>Total Pago</th>
-                    <th>Capital Ret.</th>
-                    <th>Lucro</th>
-                    <th>Multa</th>
+                    <th width="15%">Data</th>
+                    <th width="20%">Cliente</th>
+                    <th width="12%">Tipo</th>
+                    <th width="15%">Total</th>
+                    <th width="14%">Capital</th>
+                    <th width="12%">Lucro</th>
+                    <th width="12%">Multa</th>
                   </tr>
                 </thead>
                 <tbody>
                   ${htmlEntradas}
                 </tbody>
               </table>
-            ` : '<p>Nenhuma entrada registrada no período.</p>'}
+            ` : '<p style="text-align:center; color:#999; margin-top:10px;">Nenhum recebimento.</p>'}
 
-            <h2>Novos Empréstimos</h2>
+            <h2>Saídas (Empréstimos)</h2>
             ${htmlInvestimentos ? `
               <table>
                 <thead>
-                  <tr><th>Data</th><th>Cliente</th><th>Valor</th></tr>
+                  <tr><th width="20%">Data</th><th width="50%">Cliente</th><th width="30%">Valor</th></tr>
                 </thead>
                 <tbody>
                   ${htmlInvestimentos}
                 </tbody>
               </table>
-            ` : '<p>Nenhum empréstimo no período.</p>'}
+            ` : '<p style="text-align:center; color:#999; margin-top:10px;">Nenhum empréstimo.</p>'}
 
-            <div class="footer">Gerado em ${new Date().toLocaleString('pt-BR')} pelo App Verto</div>
+            <div class="footer">Gerado em ${new Date().toLocaleString('pt-BR')}</div>
           </body>
         </html>
       `;
@@ -285,36 +319,14 @@ export default function ModalRelatorio({ visivel, fechar, clientes }: Props) {
       <View style={styles.overlay}>
         <View style={styles.modal}>
           <Text style={styles.titulo}>Relatório Financeiro</Text>
-          
           <Text style={styles.label}>Data Início</Text>
-          <TextInput 
-            style={styles.input} 
-            value={dataIni} 
-            onChangeText={setDataIni} 
-            keyboardType="numbers-and-punctuation"
-            placeholder="DD/MM/AAAA"
-          />
-
+          <TextInput style={styles.input} value={dataIni} onChangeText={setDataIni} keyboardType="numbers-and-punctuation" placeholder="DD/MM/AAAA" />
           <Text style={styles.label}>Data Fim</Text>
-          <TextInput 
-            style={styles.input} 
-            value={dataFim} 
-            onChangeText={setDataFim}
-            keyboardType="numbers-and-punctuation"
-            placeholder="DD/MM/AAAA"
-          />
-
-          {loading ? (
-            <ActivityIndicator size="large" color="#2C3E50" style={{ marginTop: 20 }} />
-          ) : (
+          <TextInput style={styles.input} value={dataFim} onChangeText={setDataFim} keyboardType="numbers-and-punctuation" placeholder="DD/MM/AAAA" />
+          {loading ? ( <ActivityIndicator size="large" color="#2C3E50" style={{ marginTop: 20 }} /> ) : (
             <View style={styles.botoes}>
-              <TouchableOpacity style={[styles.btn, styles.btnCancelar]} onPress={fechar}>
-                <Text style={styles.btnTxt}>Fechar</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[styles.btn, styles.btnGerar]} onPress={gerarRelatorio}>
-                <Ionicons name="print-outline" size={20} color="#FFF" style={{ marginRight: 5 }} />
-                <Text style={[styles.btnTxt, { color: '#FFF' }]}>Gerar PDF</Text>
-              </TouchableOpacity>
+              <TouchableOpacity style={[styles.btn, styles.btnCancelar]} onPress={fechar}><Text style={styles.btnTxt}>Fechar</Text></TouchableOpacity>
+              <TouchableOpacity style={[styles.btn, styles.btnGerar]} onPress={gerarRelatorio}><Ionicons name="print-outline" size={20} color="#FFF" style={{ marginRight: 5 }} /><Text style={[styles.btnTxt, { color: '#FFF' }]}>Gerar PDF</Text></TouchableOpacity>
             </View>
           )}
         </View>
