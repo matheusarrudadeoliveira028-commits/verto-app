@@ -1,134 +1,176 @@
-import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Modal, StyleSheet, Alert } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
+import { Picker } from '@react-native-picker/picker';
+import React, { useEffect, useState } from 'react';
+import { Alert, Modal, ScrollView, StyleSheet, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { Contrato } from '../types';
 
-type Props = {
+interface Props {
   visivel: boolean;
-  clienteNome: string;
   fechar: () => void;
-  salvar: (novoContrato: Contrato) => void;
-};
+  salvar: (novo: Contrato) => void;
+  clienteNome: string;
+}
 
-export default function ModalNovoEmprestimo({ visivel, clienteNome, fechar, salvar }: Props) {
-  const [valor, setValor] = useState('');
-  const [juros, setJuros] = useState('');
-  const [dataInicio, setDataInicio] = useState('');
-  const [garantia, setGarantia] = useState('');
+export default function ModalNovoEmprestimo({ visivel, fechar, salvar, clienteNome }: Props) {
+  const [capital, setCapital] = useState('');
+  const [taxa, setTaxa] = useState('20');
+  const [frequencia, setFrequencia] = useState('SEMANAL');
   const [multa, setMulta] = useState('');
+  const [diasDiario, setDiasDiario] = useState('20');
   
-  // ALTERADO: Estado inicial com SEMANAL
-  const [frequencia, setFrequencia] = useState<'MENSAL' | 'SEMANAL' | 'DIARIO'>('MENSAL');
-  const [diasDiario, setDiasDiario] = useState('');
+  // Novos Campos
+  const [garantia, setGarantia] = useState('');
+  const [dataInicio, setDataInicio] = useState('');
+
+  // Seta a data de hoje ao abrir
+  useEffect(() => {
+    if (visivel) {
+      setDataInicio(new Date().toLocaleDateString('pt-BR'));
+    }
+  }, [visivel]);
 
   const handleSalvar = () => {
-    if (!valor || !juros || !dataInicio) return Alert.alert("Erro", "Preencha os campos principais");
-    if (frequencia === 'DIARIO' && !diasDiario) return Alert.alert("Erro", "Informe a quantidade de dias");
+    if (!capital) {
+      Alert.alert("Erro", "Informe o valor do empr√©stimo");
+      return;
+    }
 
-    try {
-      const capital = parseFloat(valor);
-      const taxa = parseFloat(juros);
-      const valMulta = multa ? parseFloat(multa) : 0;
-      const qtdDias = diasDiario ? parseInt(diasDiario) : 0;
+    const novo: any = {
+      id: Date.now(),
+      capital: parseFloat(capital.replace(',', '.')),
+      taxa: parseFloat(taxa.replace(',', '.')),
+      frequencia,
+      dataInicio: dataInicio, // Usa a data escolhida
+      garantia: garantia,     // Salva a garantia
+      status: 'ATIVO',
+      movimentacoes: []
+    };
 
-      const p = dataInicio.split('/');
-      const dataVenc = new Date(Number(p[2]), Number(p[1]) - 1, Number(p[0]));
+    if (frequencia !== 'DIARIO' && multa) {
+      novo.valorMultaDiaria = parseFloat(multa.replace(',', '.'));
+    } else {
+      novo.valorMultaDiaria = 0;
+    }
 
-      // L”GICA ATUALIZADA
-      if (frequencia === 'MENSAL') {
-        dataVenc.setMonth(dataVenc.getMonth() + 1);
-      } else if (frequencia === 'SEMANAL') {
-        dataVenc.setDate(dataVenc.getDate() + 7); // Soma 7 dias
-      } else if (frequencia === 'DIARIO') {
-        dataVenc.setDate(dataVenc.getDate() + qtdDias);
-      }
+    if (frequencia === 'DIARIO') {
+        novo.diasDiario = parseInt(diasDiario);
+    }
 
-      const novoContrato: Contrato = {
-        id: Date.now(),
-        capital,
-        taxa,
-        lucroTotal: 0,
-        multasPagas: 0,
-        frequencia,        
-        diasDiario: qtdDias, 
-        dataInicio,
-        proximoVencimento: dataVenc.toLocaleDateString('pt-BR'),
-        // \u00F3 = Û
-        garantia: garantia || 'Nota Promiss\u00F3ria', 
-        valorMultaDiaria: valMulta,
-        status: 'ATIVO',
-        // \u00E9 = È
-        movimentacoes: [`${dataInicio}: Empr\u00E9stimo ${frequencia} iniciado (R$ ${capital})`] 
-      };
-
-      salvar(novoContrato);
-      setValor(''); setJuros(''); setDataInicio(''); setGarantia(''); setMulta('');
-      setFrequencia('MENSAL'); setDiasDiario('');
-      
-    } catch (e) { Alert.alert("Erro", "Data inv\u00E1lida (use DD/MM/AAAA)"); }
+    salvar(novo);
+    
+    // Limpa
+    setCapital('');
+    setTaxa('20');
+    setMulta('');
+    setDiasDiario('20');
+    setFrequencia('SEMANAL');
+    setGarantia('');
   };
 
   return (
-    <Modal visible={visivel} transparent animationType="slide" onRequestClose={fechar}>
-      <View style={styles.mF}>
-        <View style={styles.mC}>
-          {/* \u00E9 = È */}
-          <Text style={styles.mT}>Novo Empr{'\u00E9'}stimo: {clienteNome}</Text>
-          
-          {/* \u00EA = Í (FrequÍncia) */}
-          <Text style={styles.label}>Frequ{'\u00EA'}ncia do Pagamento</Text>
-          <View style={styles.boxFreq}>
-            <TouchableOpacity 
-              style={[styles.btnFreq, frequencia === 'MENSAL' && styles.btnFreqAtivo]} 
-              onPress={() => setFrequencia('MENSAL')}>
-              <Text style={[styles.txtFreq, frequencia === 'MENSAL' && styles.txtFreqAtivo]}>Mensal</Text>
-            </TouchableOpacity>
-
-            {/* BOT√O ALTERADO PARA SEMANAL */}
-            <TouchableOpacity 
-              style={[styles.btnFreq, frequencia === 'SEMANAL' && styles.btnFreqAtivo]} 
-              onPress={() => setFrequencia('SEMANAL')}>
-              <Text style={[styles.txtFreq, frequencia === 'SEMANAL' && styles.txtFreqAtivo]}>Semanal</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity 
-              style={[styles.btnFreq, frequencia === 'DIARIO' && styles.btnFreqAtivo]} 
-              onPress={() => setFrequencia('DIARIO')}>
-              {/* \u00E1 = · (Di·rio) */}
-              <Text style={[styles.txtFreq, frequencia === 'DIARIO' && styles.txtFreqAtivo]}>Di{'\u00E1'}rio</Text>
+    <Modal visible={visivel} animationType="slide" transparent>
+      <View style={styles.overlay}>
+        <View style={styles.modal}>
+          <View style={styles.header}>
+            <Text style={styles.titulo}>Novo Empr√©stimo</Text>
+            <TouchableOpacity onPress={fechar}>
+              <Ionicons name="close" size={24} color="#333" />
             </TouchableOpacity>
           </View>
+          
+          <Text style={styles.subtitulo}>Cliente: {clienteNome}</Text>
 
-          {frequencia === 'DIARIO' && (
+          <ScrollView style={{ maxHeight: 450 }}>
+            
+            <View style={styles.row}>
+                <View style={{ flex: 1, marginRight: 10 }}>
+                    <Text style={styles.label}>Valor (R$)</Text>
+                    <TextInput 
+                      style={styles.input} 
+                      value={capital} 
+                      onChangeText={setCapital} 
+                      keyboardType="numeric" 
+                      placeholder="0.00"
+                      autoFocus
+                    />
+                </View>
+                <View style={{ flex: 1 }}>
+                    <Text style={styles.label}>Data In√≠cio</Text>
+                    <TextInput 
+                      style={styles.input} 
+                      value={dataInicio} 
+                      onChangeText={setDataInicio} 
+                      keyboardType="numbers-and-punctuation" 
+                      placeholder="DD/MM/AAAA"
+                    />
+                </View>
+            </View>
+
+            <View style={styles.row}>
+              <View style={{ flex: 1, marginRight: 10 }}>
+                <Text style={styles.label}>Taxa (%)</Text>
+                <TextInput 
+                  style={styles.input} 
+                  value={taxa} 
+                  onChangeText={setTaxa} 
+                  keyboardType="numeric" 
+                />
+              </View>
+              
+              <View style={{ flex: 1 }}>
+                <Text style={styles.label}>Modalidade</Text>
+                <View style={styles.pickerContainer}>
+                  <Picker
+                    selectedValue={frequencia}
+                    onValueChange={(itemValue: any) => setFrequencia(itemValue)}
+                    style={styles.picker}
+                  >
+                    <Picker.Item label="Semanal (4x)" value="SEMANAL" />
+                    <Picker.Item label="Di√°rio" value="DIARIO" />
+                    <Picker.Item label="Mensal" value="MENSAL" />
+                  </Picker>
+                </View>
+              </View>
+            </View>
+            
+            {frequencia === 'DIARIO' ? (
+              <View>
+                 <Text style={styles.label}>Quantidade de Dias</Text>
+                 <TextInput 
+                    style={styles.input} 
+                    value={diasDiario} 
+                    onChangeText={setDiasDiario} 
+                    keyboardType="numeric"
+                 />
+                 <Text style={styles.hint}>* Sem multa autom√°tica.</Text>
+              </View>
+            ) : (
+              <View>
+                <Text style={styles.label}>Multa Di√°ria (R$)</Text>
+                <TextInput 
+                  style={styles.input} 
+                  value={multa} 
+                  onChangeText={setMulta} 
+                  keyboardType="numeric" 
+                  placeholder="Ex: 10.00 (Opcional)"
+                />
+              </View>
+            )}
+
+            <Text style={styles.label}>Garantia (Opcional)</Text>
             <TextInput 
-              placeholder="Quantos dias? (Ex: 20)" 
               style={styles.input} 
-              keyboardType="numeric" 
-              value={diasDiario} 
-              onChangeText={setDiasDiario} 
+              value={garantia} 
+              onChangeText={setGarantia} 
+              placeholder="Ex: Celular, Moto, etc."
             />
-          )}
 
-          <TextInput placeholder="Valor (R$)" style={styles.input} keyboardType="numeric" value={valor} onChangeText={setValor} />
-          <TextInput placeholder="Juros (%)" style={styles.input} keyboardType="numeric" value={juros} onChangeText={setJuros} />
-          
-          {/* Placeholder corrigido */}
-          <TextInput 
-            placeholder={"Data In\u00EDcio (DD/MM/AAAA)"} 
-            style={styles.input} 
-            value={dataInicio} 
-            onChangeText={setDataInicio} 
-          />
-          
-          <TextInput placeholder="Garantia (Opcional)" style={styles.input} value={garantia} onChangeText={setGarantia} />
-          <TextInput placeholder="Multa por atraso (R$)" style={[styles.input, { borderColor: '#E74C3C', borderWidth: 1 }]} keyboardType="numeric" value={multa} onChangeText={setMulta} />
-          
-          <TouchableOpacity style={styles.btnP} onPress={handleSalvar}>
-            <Text style={styles.btnTxt}>CONFIRMAR</Text>
+          </ScrollView>
+
+          <TouchableOpacity style={styles.btnSalvar} onPress={handleSalvar}>
+            <Text style={styles.btnTxt}>Criar Empr√©stimo</Text>
           </TouchableOpacity>
-          
-          <TouchableOpacity onPress={fechar} style={styles.btnCancel}>
-            <Text style={{color:'#999'}}>Cancelar</Text>
-          </TouchableOpacity>
+
         </View>
       </View>
     </Modal>
@@ -136,17 +178,17 @@ export default function ModalNovoEmprestimo({ visivel, clienteNome, fechar, salv
 }
 
 const styles = StyleSheet.create({
-  mF: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
-  mC: { backgroundColor: '#FFF', width: '85%', padding: 20, borderRadius: 15 },
-  mT: { fontSize: 16, fontWeight: 'bold', marginBottom: 15, textAlign: 'center' },
-  label: { fontSize: 12, color: '#666', marginBottom: 5, fontWeight: 'bold' },
-  input: { backgroundColor: '#F1F3F4', padding: 12, borderRadius: 8, marginBottom: 10, color: '#333' },
-  boxFreq: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15 },
-  btnFreq: { flex: 1, padding: 10, alignItems: 'center', borderRadius: 8, backgroundColor: '#EEE', marginHorizontal: 2 },
-  btnFreqAtivo: { backgroundColor: '#2980B9' },
-  txtFreq: { fontSize: 12, fontWeight: 'bold', color: '#555' },
-  txtFreqAtivo: { color: '#FFF' },
-  btnP: { backgroundColor: '#27AE60', padding: 12, borderRadius: 8, alignItems: 'center', marginTop: 5 },
-  btnTxt: { color: '#FFF', fontWeight: 'bold' },
-  btnCancel: { marginTop: 15, alignItems: 'center', padding: 10 }
+  overlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
+  modal: { width: '90%', backgroundColor: '#FFF', borderRadius: 15, padding: 20, elevation: 5 },
+  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  titulo: { fontSize: 20, fontWeight: 'bold', color: '#2C3E50' },
+  subtitulo: { fontSize: 14, color: '#7F8C8D', marginBottom: 20 },
+  label: { fontSize: 14, fontWeight: '600', color: '#333', marginBottom: 5 },
+  input: { borderWidth: 1, borderColor: '#DDD', borderRadius: 8, padding: 12, marginBottom: 15, fontSize: 16, backgroundColor: '#FAFAFA' },
+  row: { flexDirection: 'row', marginBottom: 5 },
+  pickerContainer: { borderWidth: 1, borderColor: '#DDD', borderRadius: 8, overflow: 'hidden', height: 50, justifyContent: 'center', backgroundColor: '#FAFAFA' },
+  picker: { width: '100%' },
+  btnSalvar: { backgroundColor: '#2C3E50', padding: 15, borderRadius: 8, alignItems: 'center', marginTop: 10 },
+  btnTxt: { color: '#FFF', fontWeight: 'bold', fontSize: 16 },
+  hint: { fontSize: 12, color: '#999', marginTop: -10, marginBottom: 15, fontStyle: 'italic' }
 });
