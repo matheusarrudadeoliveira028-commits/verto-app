@@ -80,14 +80,12 @@ export function useClientes() {
     const dataBaseStr = novoContrato.dataInicio || new Date().toLocaleDateString('pt-BR');
     novoContrato.dataInicio = dataBaseStr; 
 
-    // Função para calcular datas futuras baseadas em dias
     const calcVencimentoDias = (dias: number) => {
         const d = converterData(dataBaseStr);
         d.setDate(d.getDate() + dias);
         return d.toLocaleDateString('pt-BR');
     };
 
-    // Função para calcular datas futuras baseadas em meses
     const calcVencimentoMes = (meses: number) => {
         const d = converterData(dataBaseStr);
         d.setMonth(d.getMonth() + meses);
@@ -129,11 +127,7 @@ export function useClientes() {
         `${dataBaseStr}: Diário Iniciado -> ${qtdDias} dias de R$ ${valorParcela.toFixed(2)}`
       ];
     } else {
-        // --- CORREÇÃO AQUI: Lógica para MENSAL ---
-        // Se cair aqui, é Mensal (ou Quinz/Outro tratado como mensal).
-        // Define vencimento para daqui 1 mês.
         novoContrato.proximoVencimento = calcVencimentoMes(1);
-        
         novoContrato.movimentacoes = [
            `${dataBaseStr}: Iniciado Capital R$ ${novoContrato.capital.toFixed(2)}`
         ];
@@ -171,6 +165,7 @@ export function useClientes() {
     ]);
   };
 
+  // --- MODIFICADO: RENOVAR E QUITAR COM ALERTA DE VALOR ---
   const acaoRenovarQuitar = async (tipo: string, contrato: Contrato, nomeCliente: string, dataInformada: string) => {
     try {
       const vJuro = contrato.capital * (contrato.taxa / 100);
@@ -193,10 +188,9 @@ export function useClientes() {
               
               if (tipo === 'RENOVAR') {
                 const nD = converterData(dataInformada);
-                // Calcula próximo vencimento na renovação
                 if (con.frequencia === 'SEMANAL') nD.setDate(nD.getDate() + 7);
                 else if (con.frequencia === 'DIARIO') nD.setDate(nD.getDate() + 1);
-                else nD.setMonth(nD.getMonth() + 1); // Mensal = +1 mês
+                else nD.setMonth(nD.getMonth() + 1);
 
                 let msg = `${dataInformada}: RENOVAÇÃO (Juros R$ ${vJuro.toFixed(2)}`;
                 if(vMulta > 0) msg += ` | Multa R$ ${vMulta.toFixed(2)}`;
@@ -239,9 +233,24 @@ export function useClientes() {
       
       await salvarNoBanco(lista);
 
-      if (vMulta > 0 && contrato.frequencia !== 'DIARIO') {
-        Alert.alert("Atenção", `Foi aplicada uma multa de R$ ${vMulta.toFixed(2)} nesta operação.`);
+      // --- NOVO ALERTA: EXIBE O VALOR A RECEBER ---
+      let valorReceber = 0;
+      if (tipo === 'RENOVAR') {
+          // Na renovação recebe Juros + Multa (o Capital fica)
+          valorReceber = vJuro + vMulta;
+      } else {
+          // Na quitação recebe Capital + Juros + Multa
+          valorReceber = contrato.capital + vJuro + vMulta;
       }
+
+      let msgAlerta = `${tipo === 'RENOVAR' ? 'Renovação' : 'Quitação'} realizada!\n\n💰 RECEBER: R$ ${valorReceber.toFixed(2)}`;
+      
+      if (vMulta > 0) {
+        msgAlerta += `\n(Inclui multa de R$ ${vMulta.toFixed(2)})`;
+      }
+      
+      Alert.alert("Sucesso", msgAlerta);
+      // ---------------------------------------------
 
     } catch (e) { Alert.alert("Erro", "Erro ao processar."); }
   };
@@ -277,6 +286,7 @@ export function useClientes() {
     await salvarNoBanco(lista);
   };
 
+  // --- MODIFICADO: PAGAR PARCELA COM ALERTA DE VALOR ---
   const pagarParcela = async (nomeCliente: string, contrato: Contrato, dataPagamento: string) => {
     try {
       let vMulta = 0;
@@ -351,9 +361,17 @@ export function useClientes() {
 
       await salvarNoBanco(lista);
       
-      if (vMulta > 0 && contrato.frequencia !== 'DIARIO') {
-        Alert.alert("Atenção", `Multa aplicada: R$ ${vMulta.toFixed(2)}`);
+      // --- NOVO ALERTA: EXIBE O VALOR DA PARCELA + MULTA ---
+      const totalRecebido = (contrato.valorParcela || 0) + vMulta;
+      
+      let msgAlerta = `Parcela registrada!\n\n💰 RECEBER: R$ ${totalRecebido.toFixed(2)}`;
+      
+      if (vMulta > 0) {
+        msgAlerta += `\n(Inclui multa de R$ ${vMulta.toFixed(2)})`;
       }
+      
+      Alert.alert("Pagamento Confirmado", msgAlerta);
+      // -----------------------------------------------------
 
     } catch (e) { Alert.alert("Erro", "Verifique a data."); }
   };
