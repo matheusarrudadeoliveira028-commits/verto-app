@@ -1,6 +1,6 @@
 ﻿import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Linking, Alert } from 'react-native';
-import { Cliente, Contrato } from '../types';
+import { Alert, Linking, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Cliente } from '../types';
 
 type Props = {
   clientes: Cliente[];
@@ -8,9 +8,14 @@ type Props = {
 
 export default function ListaCobranca({ clientes }: Props) {
   
-  const converterData = (dataStr: string) => {
-    const [dia, mes, ano] = dataStr.split('/');
-    return new Date(Number(ano), Number(mes) - 1, Number(dia));
+  // FIX: Função de converter data protegida contra valores vazios
+  const converterData = (dataStr?: string) => {
+    if (!dataStr) return new Date(); // Retorna data atual se vier vazio (para não quebrar)
+    
+    const partes = dataStr.split('/');
+    if (partes.length !== 3) return new Date();
+    
+    return new Date(Number(partes[2]), Number(partes[1]) - 1, Number(partes[0]));
   };
 
   const cobrarNoZap = (nome: string, zap: string, valor: string, data: string, atrasado: boolean) => {
@@ -18,10 +23,13 @@ export default function ListaCobranca({ clientes }: Props) {
     const numero = zap.replace(/\D/g, '');
     
     let msg = '';
+    // FIX: Garante que 'data' tenha um valor legível na mensagem
+    const dataMsg = data || 'DATA DESCONHECIDA';
+
     if (atrasado) {
-        msg = `Olá ${nome}, constou aqui que seu pagamento de R$ ${valor} venceu dia ${data}. Podemos regularizar hoje?`;
+        msg = `Olá ${nome}, constou aqui que seu pagamento de R$ ${valor} venceu dia ${dataMsg}. Podemos regularizar hoje?`;
     } else {
-        msg = `Olá ${nome}, lembrete do vencimento hoje (${data}). Valor: R$ ${valor}. Aguardo confirmação!`;
+        msg = `Olá ${nome}, lembrete do vencimento hoje (${dataMsg}). Valor: R$ ${valor}. Aguardo confirmação!`;
     }
     
     Linking.openURL(`https://wa.me/55${numero}?text=${encodeURIComponent(msg)}`);
@@ -39,7 +47,9 @@ export default function ListaCobranca({ clientes }: Props) {
 
   clientes.forEach(cli => {
     (cli.contratos || []).forEach(con => {
-      if (con.status === 'ATIVO' || con.status === 'PARCELADO') {
+      // FIX: Adicionada verificação !con.proximoVencimento para pular contratos quebrados
+      if ((con.status === 'ATIVO' || con.status === 'PARCELADO') && con.proximoVencimento) {
+        
         const dataVenc = converterData(con.proximoVencimento);
         const diffTime = hoje.getTime() - dataVenc.getTime();
         
@@ -82,7 +92,7 @@ export default function ListaCobranca({ clientes }: Props) {
             <Text style={[styles.status, {color: corBorda}]}>{textoStatus}</Text>
         </View>
         <TouchableOpacity 
-            style={[styles.btnZapMini, {backgroundColor: corBorda === '#E74C3C' ? '#E74C3C' : '#25D366'}]} // Vermelho se atrasado, Verde se hoje
+            style={[styles.btnZapMini, {backgroundColor: corBorda === '#E74C3C' ? '#E74C3C' : '#25D366'}]} 
             onPress={() => cobrarNoZap(item.cliente, item.whatsapp, item.valorCobrar.toFixed(2), item.contrato.proximoVencimento, item.diasAtraso > 0)}
         >
             <Text style={styles.txtZap}>📱 COBRAR</Text>
@@ -90,7 +100,8 @@ export default function ListaCobranca({ clientes }: Props) {
       </View>
 
       <View style={styles.detalhes}>
-        <Text style={styles.data}>Vencimento: {item.contrato.proximoVencimento}</Text>
+        {/* FIX: Adicionado fallback para evitar texto vazio */}
+        <Text style={styles.data}>Vencimento: {item.contrato.proximoVencimento || '--/--/----'}</Text>
         {item.contrato.status === 'PARCELADO' ? (
             <View>
                 <Text style={styles.tipo}>PARCELA {item.parcelaAtual}/{item.contrato.totalParcelas}</Text>

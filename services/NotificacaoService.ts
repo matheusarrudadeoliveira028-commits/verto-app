@@ -2,11 +2,14 @@
 import { Cliente } from '../types';
 
 // Configuração da Notificação
+// FIX: Adicionados 'shouldShowBanner' e 'shouldShowList' para corrigir o erro de TypeScript
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
     shouldPlaySound: true,
     shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
   }),
 });
 
@@ -29,7 +32,15 @@ export async function verificarNotificacoes(clientes: Cliente[]) {
     (cli.contratos || []).forEach(con => {
       // Considera apenas contratos Ativos ou Parcelados
       if (con.status === 'ATIVO' || con.status === 'PARCELADO') {
+        
+        // --- FIX: Verifica se a data existe antes de tentar ler ---
+        if (!con.proximoVencimento) return;
+
         const p = con.proximoVencimento.split('/');
+        
+        // --- FIX: Verifica se a data está no formato correto (dia/mês/ano) ---
+        if (p.length < 3) return;
+
         const dataVenc = new Date(Number(p[2]), Number(p[1]) - 1, Number(p[0]));
         
         // Se a data de vencimento for HOJE ou ANTES DE HOJE (Atrasado)
@@ -51,7 +62,7 @@ export async function verificarNotificacoes(clientes: Cliente[]) {
   if (qtdCobrancas > 0) {
     await Notifications.scheduleNotificationAsync({
       content: {
-        title: "Bom dia, chefe! 🎩",
+        title: "Chefe, Temos Trabalho! 🎩",
         body: `O Sr. tem ${qtdCobrancas} cobranças para fazer hoje (Total: R$ ${valorTotal.toFixed(2)})`,
         sound: true,
       },

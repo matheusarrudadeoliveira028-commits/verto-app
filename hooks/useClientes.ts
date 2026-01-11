@@ -39,6 +39,7 @@ export function useClientes() {
     return { rua: capitalTotal, capital: capitalTotal, lucro, multas };
   };
 
+  // Funcao auxiliar segura para converter data
   const converterData = (dataStr: string) => {
     try {
       if (!dataStr) return new Date();
@@ -79,9 +80,17 @@ export function useClientes() {
     const dataBaseStr = novoContrato.dataInicio || new Date().toLocaleDateString('pt-BR');
     novoContrato.dataInicio = dataBaseStr; 
 
-    const calcVencimento = (dias: number) => {
+    // Função para calcular datas futuras baseadas em dias
+    const calcVencimentoDias = (dias: number) => {
         const d = converterData(dataBaseStr);
         d.setDate(d.getDate() + dias);
+        return d.toLocaleDateString('pt-BR');
+    };
+
+    // Função para calcular datas futuras baseadas em meses
+    const calcVencimentoMes = (meses: number) => {
+        const d = converterData(dataBaseStr);
+        d.setMonth(d.getMonth() + meses);
         return d.toLocaleDateString('pt-BR');
     };
 
@@ -96,7 +105,7 @@ export function useClientes() {
       novoContrato.parcelasPagas = 0;
       novoContrato.valorParcela = valorParcela;
       novoContrato.lucroJurosPorParcela = lucroPorParcela; 
-      novoContrato.proximoVencimento = calcVencimento(7);
+      novoContrato.proximoVencimento = calcVencimentoDias(7);
 
       novoContrato.movimentacoes = [
         `${dataBaseStr}: Semanal Iniciado -> 4x de R$ ${valorParcela.toFixed(2)}`
@@ -114,12 +123,17 @@ export function useClientes() {
       novoContrato.parcelasPagas = 0;
       novoContrato.valorParcela = valorParcela;
       novoContrato.lucroJurosPorParcela = lucroPorParcela;
-      novoContrato.proximoVencimento = calcVencimento(1);
+      novoContrato.proximoVencimento = calcVencimentoDias(1);
 
       novoContrato.movimentacoes = [
         `${dataBaseStr}: Diário Iniciado -> ${qtdDias} dias de R$ ${valorParcela.toFixed(2)}`
       ];
     } else {
+        // --- CORREÇÃO AQUI: Lógica para MENSAL ---
+        // Se cair aqui, é Mensal (ou Quinz/Outro tratado como mensal).
+        // Define vencimento para daqui 1 mês.
+        novoContrato.proximoVencimento = calcVencimentoMes(1);
+        
         novoContrato.movimentacoes = [
            `${dataBaseStr}: Iniciado Capital R$ ${novoContrato.capital.toFixed(2)}`
         ];
@@ -157,13 +171,11 @@ export function useClientes() {
     ]);
   };
 
-  // --- RENOVAR E QUITAR (AGORA COM ALERTA) ---
   const acaoRenovarQuitar = async (tipo: string, contrato: Contrato, nomeCliente: string, dataInformada: string) => {
     try {
       const vJuro = contrato.capital * (contrato.taxa / 100);
       let vMulta = 0;
       
-      // Cálculo de Multa
       if (contrato.valorMultaDiaria && contrato.valorMultaDiaria > 0) {
         const dtPag = converterData(dataInformada);
         const dtVenc = converterData(contrato.proximoVencimento || '');
@@ -181,9 +193,10 @@ export function useClientes() {
               
               if (tipo === 'RENOVAR') {
                 const nD = converterData(dataInformada);
+                // Calcula próximo vencimento na renovação
                 if (con.frequencia === 'SEMANAL') nD.setDate(nD.getDate() + 7);
                 else if (con.frequencia === 'DIARIO') nD.setDate(nD.getDate() + 1);
-                else nD.setMonth(nD.getMonth() + 1);
+                else nD.setMonth(nD.getMonth() + 1); // Mensal = +1 mês
 
                 let msg = `${dataInformada}: RENOVAÇÃO (Juros R$ ${vJuro.toFixed(2)}`;
                 if(vMulta > 0) msg += ` | Multa R$ ${vMulta.toFixed(2)}`;
@@ -226,7 +239,6 @@ export function useClientes() {
       
       await salvarNoBanco(lista);
 
-      // --- ALERTA DE MULTA (NOVO PARA QUITAÇÃO/RENOVAÇÃO) ---
       if (vMulta > 0 && contrato.frequencia !== 'DIARIO') {
         Alert.alert("Atenção", `Foi aplicada uma multa de R$ ${vMulta.toFixed(2)} nesta operação.`);
       }
@@ -284,7 +296,6 @@ export function useClientes() {
           const cons = (cli.contratos || []).map(con => {
             if(con.id === contrato.id) {
               const novaQtdPagas = (con.parcelasPagas || 0) + 1;
-              
               const lucroDaParcela = con.lucroJurosPorParcela || 0;
               const amortizacao = (con.valorParcela || 0) - lucroDaParcela;
               let novoSaldo = (con.capital || 0) - amortizacao;
@@ -340,7 +351,6 @@ export function useClientes() {
 
       await salvarNoBanco(lista);
       
-      // --- ALERTA DE MULTA (PARA PARCELAS) ---
       if (vMulta > 0 && contrato.frequencia !== 'DIARIO') {
         Alert.alert("Atenção", `Multa aplicada: R$ ${vMulta.toFixed(2)}`);
       }
