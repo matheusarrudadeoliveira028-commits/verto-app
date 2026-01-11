@@ -39,7 +39,6 @@ export function useClientes() {
     return { rua: capitalTotal, capital: capitalTotal, lucro, multas };
   };
 
-  // Conversor de data robusto
   const converterData = (dataStr: string) => {
     try {
       if (!dataStr) return new Date();
@@ -76,7 +75,6 @@ export function useClientes() {
     ]);
   };
 
-  // --- ADICIONAR CONTRATO ---
   const adicionarContrato = async (nomeCliente: string, novoContrato: Contrato) => {
     const dataBaseStr = novoContrato.dataInicio || new Date().toLocaleDateString('pt-BR');
     novoContrato.dataInicio = dataBaseStr; 
@@ -159,15 +157,16 @@ export function useClientes() {
     ]);
   };
 
+  // --- RENOVAR E QUITAR (AGORA COM ALERTA) ---
   const acaoRenovarQuitar = async (tipo: string, contrato: Contrato, nomeCliente: string, dataInformada: string) => {
     try {
       const vJuro = contrato.capital * (contrato.taxa / 100);
       let vMulta = 0;
       
+      // Cálculo de Multa
       if (contrato.valorMultaDiaria && contrato.valorMultaDiaria > 0) {
         const dtPag = converterData(dataInformada);
         const dtVenc = converterData(contrato.proximoVencimento || '');
-        
         if (!isNaN(dtPag.getTime()) && !isNaN(dtVenc.getTime())) {
             const diffDays = Math.ceil((dtPag.getTime() - dtVenc.getTime()) / (1000 * 60 * 60 * 24));
             if (diffDays > 0) vMulta = diffDays * contrato.valorMultaDiaria;
@@ -211,7 +210,7 @@ export function useClientes() {
                 return { 
                   ...con, 
                   status: 'QUITADO' as const, 
-                  capital: 0, // Zera o capital
+                  capital: 0, 
                   lucroTotal: (con.lucroTotal||0) + vJuro,     
                   multasPagas: (con.multasPagas||0) + vMulta,  
                   movimentacoes: h 
@@ -226,6 +225,12 @@ export function useClientes() {
       });
       
       await salvarNoBanco(lista);
+
+      // --- ALERTA DE MULTA (NOVO PARA QUITAÇÃO/RENOVAÇÃO) ---
+      if (vMulta > 0 && contrato.frequencia !== 'DIARIO') {
+        Alert.alert("Atenção", `Foi aplicada uma multa de R$ ${vMulta.toFixed(2)} nesta operação.`);
+      }
+
     } catch (e) { Alert.alert("Erro", "Erro ao processar."); }
   };
 
@@ -280,14 +285,11 @@ export function useClientes() {
             if(con.id === contrato.id) {
               const novaQtdPagas = (con.parcelasPagas || 0) + 1;
               
-              // --- CORREÇÃO DO CÁLCULO DO SALDO ---
               const lucroDaParcela = con.lucroJurosPorParcela || 0;
-              // Desconta do capital APENAS a parte de amortização (Parcela - Lucro)
-              // Antes estava descontando a parcela cheia, o que comia o capital errado.
               const amortizacao = (con.valorParcela || 0) - lucroDaParcela;
               let novoSaldo = (con.capital || 0) - amortizacao;
               
-              if (novoSaldo < 0) novoSaldo = 0; // Proteção
+              if (novoSaldo < 0) novoSaldo = 0;
 
               const novaMultaAcumulada = (con.multasPagas || 0) + vMulta;
               const novoLucroTotal = (con.lucroTotal || 0) + lucroDaParcela; 
@@ -337,7 +339,11 @@ export function useClientes() {
       });
 
       await salvarNoBanco(lista);
-      if (vMulta > 0) Alert.alert("Multa Aplicada", `R$ ${vMulta.toFixed(2)} de multa.`);
+      
+      // --- ALERTA DE MULTA (PARA PARCELAS) ---
+      if (vMulta > 0 && contrato.frequencia !== 'DIARIO') {
+        Alert.alert("Atenção", `Multa aplicada: R$ ${vMulta.toFixed(2)}`);
+      }
 
     } catch (e) { Alert.alert("Erro", "Verifique a data."); }
   };
